@@ -1,0 +1,52 @@
+#!/bin/bash
+set -e
+cache_dir="/tmp/ytt_thumbnail_cache"
+
+cleanup() {
+    rm -rf "$cache_dir"
+}
+
+get_yt_feed() {
+    if [ $# -eq 0 ]; then
+        yt-dlp --cookies-from-browser=firefox --flat-playlist -j -I 1:30 'https://www.youtube.com'
+    else
+        yt-dlp --cookies-from-browser=firefox --flat-playlist -j -I 1:30 "ytsearch30:$*"
+    fi
+}
+
+parse_to_lines() {
+    jq -r '
+        [   .thumbnails[-1].url,
+            .url,
+            .title
+        ] | join("\t")
+    '
+}
+
+get_thumbnail() {
+    cache_file="$cache_dir/$(echo "$1" | sha1sum | cut -d' ' -f1).jpg"
+    [ -f "$cache_file" ] || curl -s -o "$cache_file" "$1"
+    echo "$cache_file"
+}
+
+render_preview() {
+    dim=${FZF_PREVIEW_COLUMNS}x${FZF_PREVIEW_LINES}
+    opts='--clear --transfer-mode=stream --unicode-placeholder --stdin=no --scale-up'
+    kitty icat $opts --place="$dim@0x0" $(get_thumbnail "$1")
+    yt-dlp --print description "$2"
+}
+
+main() {
+    mkdir -p "$cache_dir"
+    trap cleanup EXIT
+    opts='--ytdl-raw-options=format="22/bv*[height<=720]+ba/b[height<=720] / wv*+ba/w"'
+    get_yt_feed "$@" | parse_to_lines | fzf --delimiter '\t' \
+        --with-nth 3 \
+        --preview "bash -c \"source '$0'; render_preview {1} {2}\"" \
+        --preview-window 'left:40%:wrap' \
+        --bind "enter:execute(mpv $opts {2})"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
